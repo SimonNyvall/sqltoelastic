@@ -1,4 +1,4 @@
-#!/usr/bin/pwsh
+#!/usr/bin/env pwsh
 Set-StrictMode -v latest
 $ErrorActionPreference = "Stop"
 
@@ -16,7 +16,7 @@ function Main() {
     }
     else {
         Log "Starting mysql:"
-        docker run -d -p 3306:3306 -v $bindmount -e 'MYSQL_ROOT_PASSWORD=abcABC123' mysql
+        docker run -d -p 3306:3306 -v $bindmount -e 'MYSQL_ROOT_PASSWORD=abcABC123' mymysql
         [string] $containerMysql = $(docker ps | grep 'mysql' | awk '{print $1}')
     }
 
@@ -30,14 +30,21 @@ function Main() {
         [string] $containerPostgres = $(docker ps | grep 'postgres' | awk '{print $1}')
     }
 
-    [string] $containerSqlserver = $(docker ps | grep 'mssql/server' | awk '{print $1}')
+    if ($(uname -m) -ne "arm64") {
+        [string] $containerimage = 'mcr.microsoft.com/mssql/server'
+    }
+    else {
+        [string] $containerimage = "mcr.microsoft.com/azure-sql-edge"
+    }
+    Log "Using container image: '$containerimage"
+    [string] $containerSqlserver = $(docker ps | grep $containerimage | awk '{print $1}')
     if ($containerSqlserver) {
         Log "Reusing existing sqlserver container: $containerSqlserver"
     }
     else {
         Log "Starting sqlserver:"
-        docker run -d -p 1433:1433 -v $bindmount -e 'ACCEPT_EULA=Y' -e 'SA_PASSWORD=abcABC123' 'mcr.microsoft.com/mssql/server'
-        [string] $containerSqlserver = $(docker ps | grep 'mssql/server' | awk '{print $1}')
+        docker run -d -p 1433:1433 -v $bindmount -e 'ACCEPT_EULA=Y' -e 'SA_PASSWORD=abcABC123' $containerimage
+        [string] $containerSqlserver = $(docker ps | grep $containerimage | awk '{print $1}')
     }
 
     [string] $containerElasticsearch = $(docker ps | grep 'elasticsearch' | awk '{print $1}')
@@ -53,16 +60,15 @@ function Main() {
     Log "Running containers:"
     docker ps
 
-    Log "Running mysql scripts:"
+    Log "Running mysql script in $($containerMysql):"
     docker exec $containerMysql /tests/setupmysql.sh
 
-    Log "Running postgres scripts:"
+    Log "Running postgres script in $($containerPostgres):"
     docker exec $containerPostgres /usr/bin/psql -U postgres -f /tests/testdataPostgres1.sql
     docker exec $containerPostgres /usr/bin/psql -U postgres -d testdb -f /tests/testdataPostgres2.sql
 
-    Log "Running sqlserver scripts:"
-    docker exec $containerSqlserver /opt/mssql-tools/bin/sqlcmd -U sa -P abcABC123 -i /tests/testdataSqlserver1.sql
-    docker exec $containerSqlserver /opt/mssql-tools/bin/sqlcmd -U sa -P abcABC123 -i /tests/testdataSqlserver2.sql
+    Log "Running sqlserver script in $($containerSqlserver):"
+    docker exec $containerSqlserver /tests/setupsqlserver.sh
 
     Log "Waiting for elasticsearch startup..."
     sleep 15
